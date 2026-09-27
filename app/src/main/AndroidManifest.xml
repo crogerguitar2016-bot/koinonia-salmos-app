@@ -34,7 +34,8 @@
 
         <service
             android:name=".MessageService"
-            android:exported="false" />
+            android:exported="false"
+            android:stopWithTask="false" />
 
     </application>
 

@@ -3,23 +3,43 @@ package com.croger.koinoniasalmos;
 import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
-import android.content.*;
+import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.graphics.Typeface;
 import android.net.Uri;
-import android.os.*;
+import android.os.Build;
+import android.os.Bundle;
 import android.provider.ContactsContract;
 import android.provider.Settings;
-import android.view.*;
-import android.widget.*;
+import android.view.Gravity;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.AdapterView;
+import android.widget.ArrayAdapter;
+import android.widget.Button;
+import android.widget.CheckBox;
+import android.widget.LinearLayout;
+import android.widget.ScrollView;
+import android.widget.Spinner;
+import android.widget.TextView;
+import android.widget.Toast;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.io.*;
+import java.io.BufferedReader;
+import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 
 
 public class MainActivity extends Activity {
@@ -32,6 +52,10 @@ public class MainActivity extends Activity {
     private static final String ULTIMA_DISTRIBUICAO =
             "ultima_distribuicao";
 
+    private static final int ACAO_NENHUMA = 0;
+    private static final int ACAO_NOVA_FILA = 1;
+    private static final int ACAO_CONTINUAR = 2;
+
 
     private final ArrayList<Contato> contatos =
             new ArrayList<>();
@@ -43,14 +67,16 @@ public class MainActivity extends Activity {
     private LinearLayout areaContatos;
 
     private TextView statusContatos;
-    private TextView statusSalmo;
     private TextView statusSelecionados;
+    private TextView statusSalmo;
 
     private Spinner spinnerSalmo;
 
+    private Button botaoAtualizar;
     private Button botaoTodos;
     private Button botaoNenhum;
     private Button botaoIniciar;
+    private Button botaoContinuar;
     private Button botaoRepetir;
 
 
@@ -62,7 +88,9 @@ public class MainActivity extends Activity {
 
     private ArrayList<String> pendenteTextos;
 
-    private boolean aguardandoOverlay = false;
+
+    private int acaoDepoisOverlay =
+            ACAO_NENHUMA;
 
 
     static class Contato {
@@ -85,10 +113,35 @@ public class MainActivity extends Activity {
     }
 
 
+    static class ContatoAgrupado {
+
+        long contactId;
+
+        String nomeCompleto;
+        String numero;
+
+        int prioridade;
+
+        ContatoAgrupado(
+                long contactId,
+                String nomeCompleto,
+                String numero,
+                int prioridade
+        ) {
+
+            this.contactId = contactId;
+            this.nomeCompleto = nomeCompleto;
+            this.numero = numero;
+            this.prioridade = prioridade;
+        }
+    }
+
+
     static class Versiculo {
 
         int salmo;
         int versiculo;
+
         String texto;
 
         Versiculo(
@@ -96,6 +149,7 @@ public class MainActivity extends Activity {
                 int versiculo,
                 String texto
         ) {
+
             this.salmo = salmo;
             this.versiculo = versiculo;
             this.texto = texto;
@@ -104,9 +158,13 @@ public class MainActivity extends Activity {
 
 
     @Override
-    protected void onCreate(Bundle savedInstanceState) {
+    protected void onCreate(
+            Bundle savedInstanceState
+    ) {
 
-        super.onCreate(savedInstanceState);
+        super.onCreate(
+                savedInstanceState
+        );
 
         criarInterface();
 
@@ -158,10 +216,11 @@ public class MainActivity extends Activity {
                 new TextView(this);
 
         subtitulo.setText(
-                "\nMensagens com versículos\n"
+                "\nEnvio assistido de versículos\n"
+                        + "Você controla quando passar para a próxima pessoa.\n"
         );
 
-        subtitulo.setTextSize(18);
+        subtitulo.setTextSize(17);
 
         subtitulo.setGravity(
                 Gravity.CENTER
@@ -179,6 +238,14 @@ public class MainActivity extends Activity {
 
         statusContatos.setGravity(
                 Gravity.CENTER
+        );
+
+
+        botaoAtualizar =
+                new Button(this);
+
+        botaoAtualizar.setText(
+                "ATUALIZAR CONTATOS"
         );
 
 
@@ -276,7 +343,12 @@ public class MainActivity extends Activity {
         ArrayList<String> opcoes =
                 new ArrayList<>();
 
-        for (int i = 1; i <= 150; i++) {
+        for (
+                int i = 1;
+                i <= 150;
+                i++
+        ) {
+
             opcoes.add(
                     "Salmo " + i
             );
@@ -300,10 +372,6 @@ public class MainActivity extends Activity {
         statusSalmo =
                 new TextView(this);
 
-        statusSalmo.setText(
-                "Carregando Salmos..."
-        );
-
         statusSalmo.setTextSize(17);
 
         statusSalmo.setGravity(
@@ -315,10 +383,22 @@ public class MainActivity extends Activity {
                 new Button(this);
 
         botaoIniciar.setText(
-                "INICIAR MENSAGENS"
+                "INICIAR NOVA FILA"
         );
 
         botaoIniciar.setEnabled(
+                false
+        );
+
+
+        botaoContinuar =
+                new Button(this);
+
+        botaoContinuar.setText(
+                "CONTINUAR FILA ANTERIOR"
+        );
+
+        botaoContinuar.setEnabled(
                 false
         );
 
@@ -339,6 +419,7 @@ public class MainActivity extends Activity {
         raiz.addView(titulo);
         raiz.addView(subtitulo);
         raiz.addView(statusContatos);
+        raiz.addView(botaoAtualizar);
         raiz.addView(linhaBotoes);
         raiz.addView(statusSelecionados);
         raiz.addView(areaContatos);
@@ -346,6 +427,7 @@ public class MainActivity extends Activity {
         raiz.addView(spinnerSalmo);
         raiz.addView(statusSalmo);
         raiz.addView(botaoIniciar);
+        raiz.addView(botaoContinuar);
         raiz.addView(botaoRepetir);
 
 
@@ -360,7 +442,15 @@ public class MainActivity extends Activity {
                 )
         );
 
-        setContentView(scroll);
+
+        setContentView(
+                scroll
+        );
+
+
+        botaoAtualizar.setOnClickListener(
+                v -> carregarContatos()
+        );
 
 
         botaoTodos.setOnClickListener(
@@ -383,8 +473,10 @@ public class MainActivity extends Activity {
                             int position,
                             long id
                     ) {
+
                         atualizarStatusSalmo();
                     }
+
 
                     @Override
                     public void onNothingSelected(
@@ -397,6 +489,11 @@ public class MainActivity extends Activity {
 
         botaoIniciar.setOnClickListener(
                 v -> prepararNovaRodada()
+        );
+
+
+        botaoContinuar.setOnClickListener(
+                v -> continuarFila()
         );
 
 
@@ -436,6 +533,7 @@ public class MainActivity extends Activity {
                     (linha = reader.readLine())
                             != null
             ) {
+
                 sb.append(linha);
             }
 
@@ -480,7 +578,7 @@ public class MainActivity extends Activity {
         } catch (Exception e) {
 
             statusSalmo.setText(
-                    "Erro ao carregar os Salmos."
+                    "Erro ao carregar Salmos."
             );
 
 
@@ -495,7 +593,9 @@ public class MainActivity extends Activity {
 
 
     private ArrayList<Versiculo>
-    versiculosDoSalmo(int numero) {
+    versiculosDoSalmo(
+            int numero
+    ) {
 
         ArrayList<Versiculo> resultado =
                 new ArrayList<>();
@@ -504,6 +604,7 @@ public class MainActivity extends Activity {
         for (Versiculo v : versiculos) {
 
             if (v.salmo == numero) {
+
                 resultado.add(v);
             }
         }
@@ -519,6 +620,7 @@ public class MainActivity extends Activity {
                 spinnerSalmo == null
                 || versiculos.isEmpty()
         ) {
+
             return;
         }
 
@@ -584,12 +686,16 @@ public class MainActivity extends Activity {
         );
 
 
-        if (requestCode == PEDIDO_CONTATOS) {
+        if (
+                requestCode
+                        == PEDIDO_CONTATOS
+        ) {
 
             if (
                     grantResults.length > 0
                     && grantResults[0]
-                    == PackageManager.PERMISSION_GRANTED
+                    == PackageManager
+                    .PERMISSION_GRANTED
             ) {
 
                 carregarContatos();
@@ -597,35 +703,8 @@ public class MainActivity extends Activity {
             } else {
 
                 statusContatos.setText(
-                        "Permissão de contatos necessária."
+                        "Permissão para contatos necessária."
                 );
-
-
-                new AlertDialog.Builder(this)
-
-                        .setTitle(
-                                "Permissão necessária"
-                        )
-
-                        .setMessage(
-                                "O aplicativo precisa acessar "
-                                        + "os contatos do celular "
-                                        + "para localizar automaticamente "
-                                        + "os nomes terminados em Koinonia."
-                        )
-
-                        .setPositiveButton(
-                                "TENTAR NOVAMENTE",
-                                (dialog, which) ->
-                                        verificarPermissaoContatos()
-                        )
-
-                        .setNegativeButton(
-                                "CANCELAR",
-                                null
-                        )
-
-                        .show();
             }
         }
     }
@@ -633,16 +712,41 @@ public class MainActivity extends Activity {
 
     private void carregarContatos() {
 
+        if (
+                Build.VERSION.SDK_INT >= 23
+                && checkSelfPermission(
+                Manifest.permission.READ_CONTACTS
+        )
+                != PackageManager.PERMISSION_GRANTED
+        ) {
+
+            verificarPermissaoContatos();
+
+            return;
+        }
+
+
         contatos.clear();
 
         areaContatos.removeAllViews();
 
 
-        Set<String> numerosUsados =
-                new HashSet<>();
+        /*
+         * A chave agora é CONTACT_ID.
+         *
+         * Portanto, um contato com dois números
+         * continua aparecendo apenas UMA VEZ.
+         */
+        LinkedHashMap<Long, ContatoAgrupado> agrupados =
+                new LinkedHashMap<>();
 
 
         String[] colunas = {
+
+                ContactsContract
+                        .CommonDataKinds
+                        .Phone
+                        .CONTACT_ID,
 
                 ContactsContract
                         .CommonDataKinds
@@ -652,7 +756,12 @@ public class MainActivity extends Activity {
                 ContactsContract
                         .CommonDataKinds
                         .Phone
-                        .NUMBER
+                        .NUMBER,
+
+                ContactsContract
+                        .CommonDataKinds
+                        .Phone
+                        .IS_PRIMARY
         };
 
 
@@ -674,6 +783,15 @@ public class MainActivity extends Activity {
 
         if (cursor != null) {
 
+            int idxId =
+                    cursor.getColumnIndex(
+                            ContactsContract
+                                    .CommonDataKinds
+                                    .Phone
+                                    .CONTACT_ID
+                    );
+
+
             int idxNome =
                     cursor.getColumnIndex(
                             ContactsContract
@@ -692,14 +810,33 @@ public class MainActivity extends Activity {
                     );
 
 
-            while (cursor.moveToNext()) {
+            int idxPrincipal =
+                    cursor.getColumnIndex(
+                            ContactsContract
+                                    .CommonDataKinds
+                                    .Phone
+                                    .IS_PRIMARY
+                    );
+
+
+            while (
+                    cursor.moveToNext()
+            ) {
 
                 if (
-                        idxNome < 0
+                        idxId < 0
+                        || idxNome < 0
                         || idxNumero < 0
                 ) {
+
                     break;
                 }
+
+
+                long contactId =
+                        cursor.getLong(
+                                idxId
+                        );
 
 
                 String nomeCompleto =
@@ -714,10 +851,28 @@ public class MainActivity extends Activity {
                         );
 
 
+                int principal = 0;
+
+
+                if (
+                        idxPrincipal >= 0
+                        && !cursor.isNull(
+                        idxPrincipal
+                )
+                ) {
+
+                    principal =
+                            cursor.getInt(
+                                    idxPrincipal
+                            );
+                }
+
+
                 if (
                         nomeCompleto == null
                         || numero == null
                 ) {
+
                     continue;
                 }
 
@@ -727,6 +882,7 @@ public class MainActivity extends Activity {
                                 nomeCompleto
                         )
                 ) {
+
                     continue;
                 }
 
@@ -742,43 +898,81 @@ public class MainActivity extends Activity {
                 }
 
 
-                if (
-                        numerosUsados
-                                .contains(numero)
-                ) {
-                    continue;
-                }
-
-
-                String primeiroNome =
-                        limparPrimeiroNome(
-                                nomeCompleto
+                ContatoAgrupado anterior =
+                        agrupados.get(
+                                contactId
                         );
 
 
                 if (
-                        primeiroNome.isEmpty()
+                        anterior == null
+                        || principal
+                        > anterior.prioridade
                 ) {
-                    continue;
+
+                    agrupados.put(
+                            contactId,
+
+                            new ContatoAgrupado(
+                                    contactId,
+                                    nomeCompleto,
+                                    numero,
+                                    principal
+                            )
+                    );
                 }
-
-
-                numerosUsados.add(
-                        numero
-                );
-
-
-                contatos.add(
-                        new Contato(
-                                primeiroNome,
-                                nomeCompleto,
-                                numero
-                        )
-                );
             }
 
 
             cursor.close();
+        }
+
+
+        Set<String> numerosUsados =
+                new HashSet<>();
+
+
+        for (
+                ContatoAgrupado item :
+                agrupados.values()
+        ) {
+
+            if (
+                    numerosUsados.contains(
+                            item.numero
+                    )
+            ) {
+
+                continue;
+            }
+
+
+            String primeiroNome =
+                    limparPrimeiroNome(
+                            item.nomeCompleto
+                    );
+
+
+            if (
+                    primeiroNome.isEmpty()
+            ) {
+
+                continue;
+            }
+
+
+            numerosUsados.add(
+                    item.numero
+            );
+
+
+            contatos.add(
+                    new Contato(
+                            primeiroNome,
+                            item.nomeCompleto,
+                            item.numero
+                    )
+            );
         }
 
 
@@ -791,7 +985,10 @@ public class MainActivity extends Activity {
         );
 
 
-        for (Contato contato : contatos) {
+        for (
+                Contato contato :
+                contatos
+        ) {
 
             CheckBox cb =
                     new CheckBox(this);
@@ -844,6 +1041,14 @@ public class MainActivity extends Activity {
         botaoRepetir.setEnabled(
                 existeUltimaDistribuicao()
         );
+
+
+        botaoContinuar.setEnabled(
+                MessageService
+                        .existeFilaPendente(
+                                this
+                        )
+        );
     }
 
 
@@ -860,6 +1065,10 @@ public class MainActivity extends Activity {
 
         return n.equals("koinonia")
                 || n.endsWith(" koinonia")
+
+                || n.equals("coinonia")
+                || n.endsWith(" coinonia")
+
                 || n.equals("quaerinonia")
                 || n.endsWith(" quaerinonia");
     }
@@ -871,7 +1080,9 @@ public class MainActivity extends Activity {
 
         String nome =
                 nomeCompleto.replaceFirst(
-                        "(?i)\\s+(Koinonia|Quaerinonia)\\s*$",
+                        "(?i)\\s+"
+                                + "(Koinonia|Coinonia|Quaerinonia)"
+                                + "\\s*$",
                         ""
                 ).trim();
 
@@ -904,10 +1115,12 @@ public class MainActivity extends Activity {
         }
 
 
-        return primeiro.substring(0, 1)
-                .toUpperCase(
-                        Locale.getDefault()
-                )
+        return primeiro.substring(
+                0,
+                1
+        ).toUpperCase(
+                Locale.getDefault()
+        )
                 + primeiro.substring(1);
     }
 
@@ -931,6 +1144,7 @@ public class MainActivity extends Activity {
         if (
                 numero.startsWith("00")
         ) {
+
             numero =
                     numero.substring(2);
         }
@@ -940,6 +1154,7 @@ public class MainActivity extends Activity {
                 numero.length() == 10
                 || numero.length() == 11
         ) {
+
             numero =
                     "55" + numero;
         }
@@ -948,6 +1163,7 @@ public class MainActivity extends Activity {
         if (
                 numero.length() < 10
         ) {
+
             return null;
         }
 
@@ -959,13 +1175,20 @@ public class MainActivity extends Activity {
             boolean selecionar
     ) {
 
-        for (Contato contato : contatos) {
+        for (
+                Contato contato :
+                contatos
+        ) {
 
-            if (contato.checkBox != null) {
+            if (
+                    contato.checkBox
+                            != null
+            ) {
 
-                contato.checkBox.setChecked(
-                        selecionar
-                );
+                contato.checkBox
+                        .setChecked(
+                                selecionar
+                        );
             }
         }
 
@@ -981,11 +1204,16 @@ public class MainActivity extends Activity {
                 new ArrayList<>();
 
 
-        for (Contato contato : contatos) {
+        for (
+                Contato contato :
+                contatos
+        ) {
 
             if (
                     contato.checkBox != null
-                    && contato.checkBox.isChecked()
+                    && contato
+                    .checkBox
+                    .isChecked()
             ) {
 
                 resultado.add(
@@ -1022,7 +1250,9 @@ public class MainActivity extends Activity {
                 contatosSelecionados();
 
 
-        if (selecionados.isEmpty()) {
+        if (
+                selecionados.isEmpty()
+        ) {
 
             Toast.makeText(
                     this,
@@ -1046,11 +1276,13 @@ public class MainActivity extends Activity {
                 );
 
 
-        if (capitulo.isEmpty()) {
+        if (
+                capitulo.isEmpty()
+        ) {
 
             Toast.makeText(
                     this,
-                    "Não foram encontrados versículos nesse Salmo.",
+                    "Esse Salmo não possui versículos carregados.",
                     Toast.LENGTH_LONG
             ).show();
 
@@ -1063,8 +1295,7 @@ public class MainActivity extends Activity {
         );
 
 
-        LinkedHashMap<String, Versiculo>
-                distribuicao =
+        LinkedHashMap<String, Versiculo> distribuicao =
                 new LinkedHashMap<>();
 
 
@@ -1110,11 +1341,13 @@ public class MainActivity extends Activity {
                 contatosSelecionados();
 
 
-        if (selecionados.isEmpty()) {
+        if (
+                selecionados.isEmpty()
+        ) {
 
             Toast.makeText(
                     this,
-                    "Selecione quem ficou sem envio.",
+                    "Selecione quem deseja repetir.",
                     Toast.LENGTH_LONG
             ).show();
 
@@ -1134,7 +1367,10 @@ public class MainActivity extends Activity {
                 new ArrayList<>();
 
 
-        for (Contato contato : selecionados) {
+        for (
+                Contato contato :
+                selecionados
+        ) {
 
             Versiculo v =
                     anterior.get(
@@ -1142,7 +1378,9 @@ public class MainActivity extends Activity {
                     );
 
 
-            if (v != null) {
+            if (
+                    v != null
+            ) {
 
                 repetir.put(
                         contato.numero,
@@ -1157,11 +1395,13 @@ public class MainActivity extends Activity {
         }
 
 
-        if (validos.isEmpty()) {
+        if (
+                validos.isEmpty()
+        ) {
 
             Toast.makeText(
                     this,
-                    "Nenhum dos selecionados pertence à última rodada.",
+                    "Nenhum selecionado pertence à última distribuição.",
                     Toast.LENGTH_LONG
             ).show();
 
@@ -1190,7 +1430,7 @@ public class MainActivity extends Activity {
         if (repeticao) {
 
             texto.append(
-                    "REPETIR COM OS MESMOS VERSÍCULOS\n\n"
+                    "MESMOS VERSÍCULOS\n\n"
             );
 
         } else {
@@ -1201,7 +1441,10 @@ public class MainActivity extends Activity {
         }
 
 
-        for (Contato contato : selecionados) {
+        for (
+                Contato contato :
+                selecionados
+        ) {
 
             Versiculo v =
                     distribuicao.get(
@@ -1209,7 +1452,10 @@ public class MainActivity extends Activity {
                     );
 
 
-            if (v == null) {
+            if (
+                    v == null
+            ) {
+
                 continue;
             }
 
@@ -1241,13 +1487,13 @@ public class MainActivity extends Activity {
 
 
         texto.append(
-                "\nIntervalo: 5 segundos."
+                "\nSem temporizador automático."
         );
 
 
         texto.append(
-                "\n\nO aplicativo abre cada conversa "
-                        + "e você toca no botão ENVIAR."
+                "\n\nDepois de enviar no WhatsApp, "
+                        + "toque em PRÓXIMO."
         );
 
 
@@ -1256,7 +1502,7 @@ public class MainActivity extends Activity {
                 .setTitle(
                         repeticao
                                 ? "Repetir mensagens"
-                                : "Confirmar mensagens"
+                                : "Confirmar nova fila"
                 )
 
                 .setMessage(
@@ -1301,7 +1547,10 @@ public class MainActivity extends Activity {
                 new ArrayList<>();
 
 
-        for (Contato contato : selecionados) {
+        for (
+                Contato contato :
+                selecionados
+        ) {
 
             Versiculo v =
                     distribuicao.get(
@@ -1309,7 +1558,10 @@ public class MainActivity extends Activity {
                     );
 
 
-            if (v == null) {
+            if (
+                    v == null
+            ) {
+
                 continue;
             }
 
@@ -1340,115 +1592,153 @@ public class MainActivity extends Activity {
         }
 
 
-        if (pendenteNomes.isEmpty()) {
+        if (
+                pendenteNomes.isEmpty()
+        ) {
+
             return;
         }
 
 
+        pedirOverlay(
+                ACAO_NOVA_FILA
+        );
+    }
+
+
+    private void continuarFila() {
+
         if (
-                Build.VERSION.SDK_INT >= 23
-                && !Settings.canDrawOverlays(
+                !MessageService
+                        .existeFilaPendente(
+                                this
+                        )
+        ) {
+
+            Toast.makeText(
+                    this,
+                    "Não existe fila pendente.",
+                    Toast.LENGTH_LONG
+            ).show();
+
+            botaoContinuar.setEnabled(
+                    false
+            );
+
+            return;
+        }
+
+
+        pedirOverlay(
+                ACAO_CONTINUAR
+        );
+    }
+
+
+    private void pedirOverlay(
+            int acao
+    ) {
+
+        if (
+                Build.VERSION.SDK_INT < 23
+                || Settings.canDrawOverlays(
                 this
         )
         ) {
 
-            aguardandoOverlay = true;
-
-
-            new AlertDialog.Builder(this)
-
-                    .setTitle(
-                            "Permissão necessária"
-                    )
-
-                    .setMessage(
-                            "Para abrir automaticamente "
-                                    + "a próxima conversa a cada "
-                                    + "5 segundos, permita "
-                                    + "\"Exibir sobre outros apps\" "
-                                    + "para Koinonia Salmos.\n\n"
-                                    + "Essa configuração é feita "
-                                    + "somente uma vez."
-                    )
-
-                    .setPositiveButton(
-                            "ABRIR CONFIGURAÇÃO",
-                            (dialog, which) -> {
-
-                                Intent intent =
-                                        new Intent(
-                                                Settings
-                                                        .ACTION_MANAGE_OVERLAY_PERMISSION,
-
-                                                Uri.parse(
-                                                        "package:"
-                                                                + getPackageName()
-                                                )
-                                        );
-
-
-                                startActivity(
-                                        intent
-                                );
-                            }
-                    )
-
-                    .setNegativeButton(
-                            "CANCELAR",
-                            (dialog, which) ->
-                                    aguardandoOverlay =
-                                            false
-                    )
-
-                    .show();
-
+            executarAcaoOverlay(
+                    acao
+            );
 
             return;
         }
 
 
-        iniciarServico();
+        acaoDepoisOverlay =
+                acao;
+
+
+        new AlertDialog.Builder(this)
+
+                .setTitle(
+                        "Permissão necessária"
+                )
+
+                .setMessage(
+                        "Para mostrar os botões PRÓXIMO "
+                                + "e ENCERRAR sobre o WhatsApp, "
+                                + "permita \"Exibir sobre outros apps\" "
+                                + "para Koinonia Salmos.\n\n"
+                                + "Essa autorização é necessária "
+                                + "somente uma vez."
+                )
+
+                .setPositiveButton(
+                        "ABRIR CONFIGURAÇÃO",
+                        (dialog, which) -> {
+
+                            Intent intent =
+                                    new Intent(
+                                            Settings
+                                                    .ACTION_MANAGE_OVERLAY_PERMISSION,
+
+                                            Uri.parse(
+                                                    "package:"
+                                                            + getPackageName()
+                                            )
+                                    );
+
+
+                            startActivity(
+                                    intent
+                            );
+                        }
+                )
+
+                .setNegativeButton(
+                        "CANCELAR",
+                        (dialog, which) ->
+                                acaoDepoisOverlay =
+                                        ACAO_NENHUMA
+                )
+
+                .show();
     }
 
 
-    @Override
-    protected void onResume() {
-
-        super.onResume();
-
+    private void executarAcaoOverlay(
+            int acao
+    ) {
 
         if (
-                aguardandoOverlay
-                && Build.VERSION.SDK_INT >= 23
-                && Settings.canDrawOverlays(
-                this
-        )
+                acao
+                        == ACAO_NOVA_FILA
         ) {
 
-            aguardandoOverlay =
-                    false;
+            iniciarNovaFila();
 
+        } else if (
+                acao
+                        == ACAO_CONTINUAR
+        ) {
 
-            iniciarServico();
+            continuarServico();
         }
     }
 
 
-    private void iniciarServico() {
-
-        if (
-                pendenteNomes == null
-                || pendenteNomes.isEmpty()
-        ) {
-            return;
-        }
-
+    private void iniciarNovaFila() {
 
         Intent intent =
                 new Intent(
                         this,
                         MessageService.class
                 );
+
+
+        intent.setAction(
+                MessageService.ACTION_START
+        );
 
 
         intent.putStringArrayListExtra(
@@ -1481,7 +1771,10 @@ public class MainActivity extends Activity {
         );
 
 
-        if (Build.VERSION.SDK_INT >= 26) {
+        if (
+                Build.VERSION.SDK_INT
+                        >= 26
+        ) {
 
             startForegroundService(
                     intent
@@ -1495,11 +1788,87 @@ public class MainActivity extends Activity {
         }
 
 
-        Toast.makeText(
-                this,
-                "Fila iniciada. Próxima conversa em 5 segundos.",
-                Toast.LENGTH_LONG
-        ).show();
+        botaoContinuar.setEnabled(
+                true
+        );
+    }
+
+
+    private void continuarServico() {
+
+        Intent intent =
+                new Intent(
+                        this,
+                        MessageService.class
+                );
+
+
+        intent.setAction(
+                MessageService.ACTION_RESUME
+        );
+
+
+        if (
+                Build.VERSION.SDK_INT
+                        >= 26
+        ) {
+
+            startForegroundService(
+                    intent
+            );
+
+        } else {
+
+            startService(
+                    intent
+            );
+        }
+    }
+
+
+    @Override
+    protected void onResume() {
+
+        super.onResume();
+
+
+        if (
+                acaoDepoisOverlay
+                        != ACAO_NENHUMA
+                && (
+                Build.VERSION.SDK_INT < 23
+                        || Settings.canDrawOverlays(
+                        this
+                )
+        )
+        ) {
+
+            int acao =
+                    acaoDepoisOverlay;
+
+
+            acaoDepoisOverlay =
+                    ACAO_NENHUMA;
+
+
+            executarAcaoOverlay(
+                    acao
+            );
+        }
+
+
+        if (
+                botaoContinuar
+                        != null
+        ) {
+
+            botaoContinuar.setEnabled(
+                    MessageService
+                            .existeFilaPendente(
+                                    this
+                            )
+            );
+        }
     }
 
 
@@ -1569,13 +1938,7 @@ public class MainActivity extends Activity {
                     true
             );
 
-        } catch (Exception e) {
-
-            Toast.makeText(
-                    this,
-                    "Não foi possível guardar a distribuição.",
-                    Toast.LENGTH_SHORT
-            ).show();
+        } catch (Exception ignored) {
         }
     }
 
@@ -1598,7 +1961,10 @@ public class MainActivity extends Activity {
                         );
 
 
-        if (salvo == null) {
+        if (
+                salvo == null
+        ) {
+
             return resultado;
         }
 
@@ -1615,7 +1981,10 @@ public class MainActivity extends Activity {
                     raiz.names();
 
 
-            if (nomes == null) {
+            if (
+                    nomes == null
+            ) {
+
                 return resultado;
             }
 
@@ -1675,7 +2044,9 @@ public class MainActivity extends Activity {
     }
 
 
-    private int dp(int valor) {
+    private int dp(
+            int valor
+    ) {
 
         float densidade =
                 getResources()
