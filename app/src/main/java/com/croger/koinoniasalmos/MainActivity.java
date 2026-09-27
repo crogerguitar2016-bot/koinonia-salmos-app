@@ -1,52 +1,68 @@
 package com.croger.koinoniasalmos;
 
+import android.Manifest;
 import android.app.Activity;
-import android.content.Intent;
-import android.content.SharedPreferences;
+import android.app.AlertDialog;
+import android.content.*;
+import android.content.pm.PackageManager;
+import android.database.Cursor;
 import android.graphics.Typeface;
 import android.net.Uri;
-import android.os.Bundle;
+import android.os.*;
+import android.provider.ContactsContract;
 import android.provider.Settings;
-import android.view.Gravity;
-import android.view.ViewGroup;
-import android.widget.Button;
-import android.widget.LinearLayout;
-import android.widget.ScrollView;
-import android.widget.TextView;
-import android.widget.Toast;
+import android.view.*;
+import android.widget.*;
 
-import java.io.BufferedReader;
-import java.io.ByteArrayOutputStream;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.nio.charset.Charset;
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+import java.io.*;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Comparator;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Locale;
-import java.util.Set;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
+import java.util.*;
 
 
 public class MainActivity extends Activity {
 
-    private static final int REQUEST_VCF = 1001;
+    private static final int PEDIDO_CONTATOS = 1001;
 
-    private static final String PREFS = "koinonia_prefs";
-    private static final String PREF_VCF_URI = "vcf_uri";
+    private static final String PREFS =
+            "koinonia_salmos";
 
-    private Button botaoImportar;
-    private Button botaoSalmo;
+    private static final String ULTIMA_DISTRIBUICAO =
+            "ultima_distribuicao";
+
+
+    private final ArrayList<Contato> contatos =
+            new ArrayList<>();
+
+    private final ArrayList<Versiculo> versiculos =
+            new ArrayList<>();
+
+
+    private LinearLayout areaContatos;
+
+    private TextView statusContatos;
+    private TextView statusSalmo;
+    private TextView statusSelecionados;
+
+    private Spinner spinnerSalmo;
+
+    private Button botaoTodos;
+    private Button botaoNenhum;
     private Button botaoIniciar;
+    private Button botaoRepetir;
 
-    private TextView status;
-    private TextView listaContatos;
 
-    private final List<Contato> contatosKoinonia = new ArrayList<>();
+    private ArrayList<String> pendenteNomes;
+    private ArrayList<String> pendenteNumeros;
+
+    private ArrayList<Integer> pendenteSalmos;
+    private ArrayList<Integer> pendenteVersiculos;
+
+    private ArrayList<String> pendenteTextos;
+
+    private boolean aguardandoOverlay = false;
 
 
     static class Contato {
@@ -54,6 +70,8 @@ public class MainActivity extends Activity {
         String nome;
         String nomeCompleto;
         String numero;
+
+        CheckBox checkBox;
 
         Contato(
                 String nome,
@@ -67,92 +85,275 @@ public class MainActivity extends Activity {
     }
 
 
+    static class Versiculo {
+
+        int salmo;
+        int versiculo;
+        String texto;
+
+        Versiculo(
+                int salmo,
+                int versiculo,
+                String texto
+        ) {
+            this.salmo = salmo;
+            this.versiculo = versiculo;
+            this.texto = texto;
+        }
+    }
+
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+
         super.onCreate(savedInstanceState);
 
         criarInterface();
 
-        tentarCarregarArquivoSalvo();
+        carregarSalmos();
+
+        verificarPermissaoContatos();
     }
 
 
-    // ========================================================
-    // INTERFACE
-    // ========================================================
-
     private void criarInterface() {
 
-        int padding = dp(20);
+        int margem = dp(18);
 
-        LinearLayout conteudo = new LinearLayout(this);
-        conteudo.setOrientation(LinearLayout.VERTICAL);
-        conteudo.setPadding(
-                padding,
-                padding,
-                padding,
-                padding
+        LinearLayout raiz =
+                new LinearLayout(this);
+
+        raiz.setOrientation(
+                LinearLayout.VERTICAL
         );
 
-        TextView titulo = new TextView(this);
-        titulo.setText("KOINONIA — SALMOS");
-        titulo.setTextSize(26);
-        titulo.setTypeface(null, Typeface.BOLD);
-        titulo.setGravity(Gravity.CENTER);
+        raiz.setPadding(
+                margem,
+                margem,
+                margem,
+                margem
+        );
 
-        TextView subtitulo = new TextView(this);
+
+        TextView titulo =
+                new TextView(this);
+
+        titulo.setText(
+                "KOINONIA — SALMOS"
+        );
+
+        titulo.setTextSize(27);
+
+        titulo.setTypeface(
+                null,
+                Typeface.BOLD
+        );
+
+        titulo.setGravity(
+                Gravity.CENTER
+        );
+
+
+        TextView subtitulo =
+                new TextView(this);
+
         subtitulo.setText(
-                "\nAplicativo independente\n"
+                "\nMensagens com versículos\n"
         );
+
         subtitulo.setTextSize(18);
-        subtitulo.setGravity(Gravity.CENTER);
 
-        botaoImportar = new Button(this);
-        botaoImportar.setText("IMPORTAR CONTATOS");
-
-        botaoSalmo = new Button(this);
-        botaoSalmo.setText("ESCOLHER SALMO");
-        botaoSalmo.setEnabled(false);
-
-        botaoIniciar = new Button(this);
-        botaoIniciar.setText("INICIAR MENSAGENS");
-        botaoIniciar.setEnabled(false);
-
-        status = new TextView(this);
-        status.setText(
-                "\nNenhum arquivo de contatos carregado."
-        );
-        status.setTextSize(17);
-        status.setGravity(Gravity.CENTER);
-
-        listaContatos = new TextView(this);
-        listaContatos.setTextSize(17);
-        listaContatos.setPadding(
-                0,
-                dp(16),
-                0,
-                dp(40)
+        subtitulo.setGravity(
+                Gravity.CENTER
         );
 
-        conteudo.addView(
-                titulo,
+
+        statusContatos =
+                new TextView(this);
+
+        statusContatos.setText(
+                "Procurando contatos Koinonia..."
+        );
+
+        statusContatos.setTextSize(17);
+
+        statusContatos.setGravity(
+                Gravity.CENTER
+        );
+
+
+        LinearLayout linhaBotoes =
+                new LinearLayout(this);
+
+        linhaBotoes.setOrientation(
+                LinearLayout.HORIZONTAL
+        );
+
+
+        botaoTodos =
+                new Button(this);
+
+        botaoTodos.setText(
+                "SELECIONAR TODOS"
+        );
+
+
+        botaoNenhum =
+                new Button(this);
+
+        botaoNenhum.setText(
+                "LIMPAR"
+        );
+
+
+        LinearLayout.LayoutParams metade =
                 new LinearLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.WRAP_CONTENT
-                )
+                        0,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        1
+                );
+
+
+        linhaBotoes.addView(
+                botaoTodos,
+                metade
         );
 
-        conteudo.addView(subtitulo);
-        conteudo.addView(botaoImportar);
-        conteudo.addView(botaoSalmo);
-        conteudo.addView(botaoIniciar);
-        conteudo.addView(status);
-        conteudo.addView(listaContatos);
+        linhaBotoes.addView(
+                botaoNenhum,
+                metade
+        );
 
-        ScrollView scroll = new ScrollView(this);
+
+        statusSelecionados =
+                new TextView(this);
+
+        statusSelecionados.setTextSize(17);
+
+        statusSelecionados.setGravity(
+                Gravity.CENTER
+        );
+
+
+        areaContatos =
+                new LinearLayout(this);
+
+        areaContatos.setOrientation(
+                LinearLayout.VERTICAL
+        );
+
+        areaContatos.setPadding(
+                0,
+                dp(8),
+                0,
+                dp(12)
+        );
+
+
+        TextView tituloSalmo =
+                new TextView(this);
+
+        tituloSalmo.setText(
+                "\nESCOLHA O SALMO"
+        );
+
+        tituloSalmo.setTextSize(20);
+
+        tituloSalmo.setTypeface(
+                null,
+                Typeface.BOLD
+        );
+
+        tituloSalmo.setGravity(
+                Gravity.CENTER
+        );
+
+
+        spinnerSalmo =
+                new Spinner(this);
+
+
+        ArrayList<String> opcoes =
+                new ArrayList<>();
+
+        for (int i = 1; i <= 150; i++) {
+            opcoes.add(
+                    "Salmo " + i
+            );
+        }
+
+
+        ArrayAdapter<String> adapter =
+                new ArrayAdapter<>(
+                        this,
+                        android.R.layout
+                                .simple_spinner_dropdown_item,
+                        opcoes
+                );
+
+
+        spinnerSalmo.setAdapter(
+                adapter
+        );
+
+
+        statusSalmo =
+                new TextView(this);
+
+        statusSalmo.setText(
+                "Carregando Salmos..."
+        );
+
+        statusSalmo.setTextSize(17);
+
+        statusSalmo.setGravity(
+                Gravity.CENTER
+        );
+
+
+        botaoIniciar =
+                new Button(this);
+
+        botaoIniciar.setText(
+                "INICIAR MENSAGENS"
+        );
+
+        botaoIniciar.setEnabled(
+                false
+        );
+
+
+        botaoRepetir =
+                new Button(this);
+
+        botaoRepetir.setText(
+                "REPETIR SELECIONADOS\n"
+                        + "COM OS MESMOS VERSÍCULOS"
+        );
+
+        botaoRepetir.setEnabled(
+                false
+        );
+
+
+        raiz.addView(titulo);
+        raiz.addView(subtitulo);
+        raiz.addView(statusContatos);
+        raiz.addView(linhaBotoes);
+        raiz.addView(statusSelecionados);
+        raiz.addView(areaContatos);
+        raiz.addView(tituloSalmo);
+        raiz.addView(spinnerSalmo);
+        raiz.addView(statusSalmo);
+        raiz.addView(botaoIniciar);
+        raiz.addView(botaoRepetir);
+
+
+        ScrollView scroll =
+                new ScrollView(this);
 
         scroll.addView(
-                conteudo,
+                raiz,
                 new ScrollView.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.WRAP_CONTENT
@@ -162,160 +363,61 @@ public class MainActivity extends Activity {
         setContentView(scroll);
 
 
-        botaoImportar.setOnClickListener(v -> escolherArquivoVcf());
-
-        botaoSalmo.setOnClickListener(v -> {
-            Toast.makeText(
-                    this,
-                    "Escolha de Salmo será ativada na próxima etapa.",
-                    Toast.LENGTH_SHORT
-            ).show();
-        });
-    }
+        botaoTodos.setOnClickListener(
+                v -> selecionarTodos(true)
+        );
 
 
-    // ========================================================
-    // ESCOLHER VCF
-    // ========================================================
+        botaoNenhum.setOnClickListener(
+                v -> selecionarTodos(false)
+        );
 
-    private void escolherArquivoVcf() {
 
-        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        spinnerSalmo.setOnItemSelectedListener(
+                new AdapterView.OnItemSelectedListener() {
 
-        intent.addCategory(Intent.CATEGORY_OPENABLE);
+                    @Override
+                    public void onItemSelected(
+                            AdapterView<?> parent,
+                            View view,
+                            int position,
+                            long id
+                    ) {
+                        atualizarStatusSalmo();
+                    }
 
-        intent.setType("*/*");
-
-        intent.putExtra(
-                Intent.EXTRA_MIME_TYPES,
-                new String[]{
-                        "text/vcard",
-                        "text/x-vcard",
-                        "text/plain",
-                        "application/octet-stream"
+                    @Override
+                    public void onNothingSelected(
+                            AdapterView<?> parent
+                    ) {
+                    }
                 }
         );
 
-        startActivityForResult(
-                intent,
-                REQUEST_VCF
+
+        botaoIniciar.setOnClickListener(
+                v -> prepararNovaRodada()
+        );
+
+
+        botaoRepetir.setOnClickListener(
+                v -> prepararRepeticao()
         );
     }
 
+    private void carregarSalmos() {
 
-    @Override
-    protected void onActivityResult(
-            int requestCode,
-            int resultCode,
-            Intent data
-    ) {
-
-        super.onActivityResult(
-                requestCode,
-                resultCode,
-                data
-        );
-
-        if (
-                requestCode == REQUEST_VCF
-                && resultCode == RESULT_OK
-                && data != null
-                && data.getData() != null
-        ) {
-
-            Uri uri = data.getData();
-
-            try {
-
-                int flags =
-                        data.getFlags()
-                                & (
-                                Intent.FLAG_GRANT_READ_URI_PERMISSION
-                                | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-                        );
-
-                getContentResolver()
-                        .takePersistableUriPermission(
-                                uri,
-                                flags & Intent.FLAG_GRANT_READ_URI_PERMISSION
-                        );
-
-            } catch (Exception ignored) {
-            }
-
-            getSharedPreferences(
-                    PREFS,
-                    MODE_PRIVATE
-            )
-                    .edit()
-                    .putString(
-                            PREF_VCF_URI,
-                            uri.toString()
-                    )
-                    .apply();
-
-            carregarVcf(uri);
-        }
-    }
-
-
-    // ========================================================
-    // CARREGAR AUTOMATICAMENTE
-    // ========================================================
-
-    private void tentarCarregarArquivoSalvo() {
-
-        SharedPreferences prefs =
-                getSharedPreferences(
-                        PREFS,
-                        MODE_PRIVATE
-                );
-
-        String salvo =
-                prefs.getString(
-                        PREF_VCF_URI,
-                        null
-                );
-
-        if (salvo == null) {
-            return;
-        }
-
-        try {
-
-            carregarVcf(
-                    Uri.parse(salvo)
-            );
-
-        } catch (Exception e) {
-
-            status.setText(
-                    "\nArquivo anterior não está mais disponível.\n"
-                            + "Toque em IMPORTAR CONTATOS."
-            );
-        }
-    }
-
-
-    // ========================================================
-    // LER ARQUIVO
-    // ========================================================
-
-    private void carregarVcf(Uri uri) {
+        versiculos.clear();
 
         try {
 
             InputStream input =
-                    getContentResolver()
-                            .openInputStream(uri);
+                    getAssets().open(
+                            "salmos_blivre.json"
+                    );
 
-            if (input == null) {
-                throw new Exception(
-                        "Não foi possível abrir o arquivo."
-                );
-            }
 
-            BufferedReader leitor =
+            BufferedReader reader =
                     new BufferedReader(
                             new InputStreamReader(
                                     input,
@@ -323,483 +425,445 @@ public class MainActivity extends Activity {
                             )
                     );
 
-            StringBuilder bruto =
+
+            StringBuilder sb =
                     new StringBuilder();
+
 
             String linha;
 
             while (
-                    (linha = leitor.readLine())
+                    (linha = reader.readLine())
                             != null
             ) {
-
-                bruto
-                        .append(linha)
-                        .append("\n");
+                sb.append(linha);
             }
 
-            leitor.close();
 
-            processarVcf(
-                    bruto.toString()
-            );
+            reader.close();
+
+
+            JSONObject raiz =
+                    new JSONObject(
+                            sb.toString()
+                    );
+
+
+            JSONArray array =
+                    raiz.getJSONArray(
+                            "versiculos"
+                    );
+
+
+            for (
+                    int i = 0;
+                    i < array.length();
+                    i++
+            ) {
+
+                JSONObject obj =
+                        array.getJSONObject(i);
+
+
+                versiculos.add(
+                        new Versiculo(
+                                obj.getInt("salmo"),
+                                obj.getInt("versiculo"),
+                                obj.getString("texto")
+                        )
+                );
+            }
+
+
+            atualizarStatusSalmo();
 
         } catch (Exception e) {
 
-            contatosKoinonia.clear();
-
-            botaoSalmo.setEnabled(false);
-            botaoIniciar.setEnabled(false);
-
-            status.setText(
-                    "\nErro ao ler o arquivo de contatos."
+            statusSalmo.setText(
+                    "Erro ao carregar os Salmos."
             );
 
-            listaContatos.setText(
-                    "\n" + e.getMessage()
-            );
+
+            Toast.makeText(
+                    this,
+                    "Erro ao carregar Salmos: "
+                            + e.getMessage(),
+                    Toast.LENGTH_LONG
+            ).show();
         }
     }
 
 
-    // ========================================================
-    // PROCESSAR VCF
-    // ========================================================
+    private ArrayList<Versiculo>
+    versiculosDoSalmo(int numero) {
 
-    private void processarVcf(String texto) {
+        ArrayList<Versiculo> resultado =
+                new ArrayList<>();
 
-        contatosKoinonia.clear();
 
-        texto = desdobrarLinhas(
-                texto
+        for (Versiculo v : versiculos) {
+
+            if (v.salmo == numero) {
+                resultado.add(v);
+            }
+        }
+
+
+        return resultado;
+    }
+
+
+    private void atualizarStatusSalmo() {
+
+        if (
+                spinnerSalmo == null
+                || versiculos.isEmpty()
+        ) {
+            return;
+        }
+
+
+        int numero =
+                spinnerSalmo
+                        .getSelectedItemPosition()
+                        + 1;
+
+
+        int quantidade =
+                versiculosDoSalmo(
+                        numero
+                ).size();
+
+
+        statusSalmo.setText(
+                "Salmo "
+                        + numero
+                        + " — "
+                        + quantidade
+                        + " versículo(s)\n"
+        );
+    }
+
+
+    private void verificarPermissaoContatos() {
+
+        if (
+                Build.VERSION.SDK_INT >= 23
+                && checkSelfPermission(
+                Manifest.permission.READ_CONTACTS
+        )
+                != PackageManager.PERMISSION_GRANTED
+        ) {
+
+            requestPermissions(
+                    new String[]{
+                            Manifest.permission.READ_CONTACTS
+                    },
+                    PEDIDO_CONTATOS
+            );
+
+            return;
+        }
+
+
+        carregarContatos();
+    }
+
+
+    @Override
+    public void onRequestPermissionsResult(
+            int requestCode,
+            String[] permissions,
+            int[] grantResults
+    ) {
+
+        super.onRequestPermissionsResult(
+                requestCode,
+                permissions,
+                grantResults
         );
 
-        Pattern padrao =
-                Pattern.compile(
-                        "BEGIN:VCARD(.*?)END:VCARD",
-                        Pattern.CASE_INSENSITIVE
-                                | Pattern.DOTALL
+
+        if (requestCode == PEDIDO_CONTATOS) {
+
+            if (
+                    grantResults.length > 0
+                    && grantResults[0]
+                    == PackageManager.PERMISSION_GRANTED
+            ) {
+
+                carregarContatos();
+
+            } else {
+
+                statusContatos.setText(
+                        "Permissão de contatos necessária."
                 );
 
-        Matcher matcher =
-                padrao.matcher(texto);
+
+                new AlertDialog.Builder(this)
+
+                        .setTitle(
+                                "Permissão necessária"
+                        )
+
+                        .setMessage(
+                                "O aplicativo precisa acessar "
+                                        + "os contatos do celular "
+                                        + "para localizar automaticamente "
+                                        + "os nomes terminados em Koinonia."
+                        )
+
+                        .setPositiveButton(
+                                "TENTAR NOVAMENTE",
+                                (dialog, which) ->
+                                        verificarPermissaoContatos()
+                        )
+
+                        .setNegativeButton(
+                                "CANCELAR",
+                                null
+                        )
+
+                        .show();
+            }
+        }
+    }
+
+
+    private void carregarContatos() {
+
+        contatos.clear();
+
+        areaContatos.removeAllViews();
+
 
         Set<String> numerosUsados =
                 new HashSet<>();
 
-        while (matcher.find()) {
 
-            String cartao =
-                    matcher.group(1);
+        String[] colunas = {
 
-            String nomeCompleto = "";
+                ContactsContract
+                        .CommonDataKinds
+                        .Phone
+                        .DISPLAY_NAME,
 
-            List<String> telefones =
-                    new ArrayList<>();
+                ContactsContract
+                        .CommonDataKinds
+                        .Phone
+                        .NUMBER
+        };
 
-            String[] linhas =
-                    cartao.split("\n");
 
-            for (String linha : linhas) {
+        Cursor cursor =
+                getContentResolver().query(
 
-                String superior =
-                        linha.toUpperCase(
-                                Locale.ROOT
-                        );
+                        ContactsContract
+                                .CommonDataKinds
+                                .Phone
+                                .CONTENT_URI,
 
-                if (
-                        superior.startsWith("FN:")
-                        || superior.startsWith("FN;")
-                ) {
+                        colunas,
 
-                    nomeCompleto =
-                            decodificarValor(
-                                    linha
-                            );
-                }
+                        null,
+                        null,
+                        null
+                );
 
-                if (
-                        superior.matches(
-                                "^(ITEM\\d+\\.)?TEL(;|:).*"
-                        )
-                ) {
 
-                    String telefone =
-                            normalizarNumero(
-                                    decodificarValor(
-                                            linha
-                                    )
-                            );
+        if (cursor != null) {
 
-                    if (telefone != null) {
-                        telefones.add(
-                                telefone
-                        );
-                    }
-                }
-            }
-
-            if (nomeCompleto.isEmpty()) {
-                continue;
-            }
-
-            if (
-                    !nomeCompleto
-                            .trim()
-                            .toLowerCase(Locale.ROOT)
-                            .matches(
-                                    ".*(?:^|\\s)koinonia$"
-                            )
-            ) {
-                continue;
-            }
-
-            if (telefones.isEmpty()) {
-                continue;
-            }
-
-            String primeiroNome =
-                    limparPrimeiroNome(
-                            nomeCompleto
+            int idxNome =
+                    cursor.getColumnIndex(
+                            ContactsContract
+                                    .CommonDataKinds
+                                    .Phone
+                                    .DISPLAY_NAME
                     );
 
-            if (primeiroNome.isEmpty()) {
-                continue;
+
+            int idxNumero =
+                    cursor.getColumnIndex(
+                            ContactsContract
+                                    .CommonDataKinds
+                                    .Phone
+                                    .NUMBER
+                    );
+
+
+            while (cursor.moveToNext()) {
+
+                if (
+                        idxNome < 0
+                        || idxNumero < 0
+                ) {
+                    break;
+                }
+
+
+                String nomeCompleto =
+                        cursor.getString(
+                                idxNome
+                        );
+
+
+                String numero =
+                        cursor.getString(
+                                idxNumero
+                        );
+
+
+                if (
+                        nomeCompleto == null
+                        || numero == null
+                ) {
+                    continue;
+                }
+
+
+                if (
+                        !ehContatoKoinonia(
+                                nomeCompleto
+                        )
+                ) {
+                    continue;
+                }
+
+
+                numero =
+                        normalizarNumero(
+                                numero
+                        );
+
+
+                if (numero == null) {
+                    continue;
+                }
+
+
+                if (
+                        numerosUsados
+                                .contains(numero)
+                ) {
+                    continue;
+                }
+
+
+                String primeiroNome =
+                        limparPrimeiroNome(
+                                nomeCompleto
+                        );
+
+
+                if (
+                        primeiroNome.isEmpty()
+                ) {
+                    continue;
+                }
+
+
+                numerosUsados.add(
+                        numero
+                );
+
+
+                contatos.add(
+                        new Contato(
+                                primeiroNome,
+                                nomeCompleto,
+                                numero
+                        )
+                );
             }
 
-            String telefone =
-                    telefones.get(0);
 
-            if (
-                    numerosUsados.contains(
-                            telefone
-                    )
-            ) {
-                continue;
-            }
-
-            numerosUsados.add(
-                    telefone
-            );
-
-            contatosKoinonia.add(
-                    new Contato(
-                            primeiroNome,
-                            nomeCompleto,
-                            telefone
-                    )
-            );
+            cursor.close();
         }
 
 
         Collections.sort(
-                contatosKoinonia,
-                Comparator.comparing(
-                        c -> c.nome.toLowerCase(
-                                Locale.ROOT
+                contatos,
+                (a, b) ->
+                        a.nome.compareToIgnoreCase(
+                                b.nome
                         )
-                )
         );
 
 
-        mostrarResultado();
-    }
+        for (Contato contato : contatos) {
+
+            CheckBox cb =
+                    new CheckBox(this);
 
 
-    // ========================================================
-    // LINHAS CONTINUADAS
-    // ========================================================
-
-    private String desdobrarLinhas(
-            String texto
-    ) {
-
-        texto = texto
-                .replace("\r\n", "\n")
-                .replace("\r", "\n");
-
-        String[] linhas =
-                texto.split(
-                        "\n",
-                        -1
-                );
-
-        List<String> resultado =
-                new ArrayList<>();
-
-        for (String linha : linhas) {
-
-            if (
-                    !resultado.isEmpty()
-                    && (
-                    linha.startsWith(" ")
-                            || linha.startsWith("\t")
-            )
-            ) {
-
-                int ultimo =
-                        resultado.size() - 1;
-
-                resultado.set(
-                        ultimo,
-                        resultado.get(ultimo)
-                                + linha.substring(1)
-                );
-
-                continue;
-            }
-
-            if (
-                    !resultado.isEmpty()
-                    && resultado
-                    .get(
-                            resultado.size() - 1
-                    )
-                    .endsWith("=")
-                    && resultado
-                    .get(
-                            resultado.size() - 1
-                    )
-                    .toUpperCase(Locale.ROOT)
-                    .contains(
-                            "QUOTED-PRINTABLE"
-                    )
-            ) {
-
-                int ultimo =
-                        resultado.size() - 1;
-
-                String anterior =
-                        resultado.get(ultimo);
-
-                resultado.set(
-                        ultimo,
-                        anterior.substring(
-                                0,
-                                anterior.length() - 1
-                        ) + linha
-                );
-
-                continue;
-            }
-
-            resultado.add(linha);
-        }
-
-        StringBuilder finalTexto =
-                new StringBuilder();
-
-        for (String item : resultado) {
-
-            finalTexto
-                    .append(item)
-                    .append("\n");
-        }
-
-        return finalTexto.toString();
-    }
+            cb.setText(
+                    contato.nome
+            );
 
 
-    // ========================================================
-    // DECODIFICAR VALOR
-    // ========================================================
-
-    private String decodificarValor(
-            String linha
-    ) {
-
-        int doisPontos =
-                linha.indexOf(':');
-
-        if (doisPontos < 0) {
-            return "";
-        }
-
-        String cabecalho =
-                linha.substring(
-                        0,
-                        doisPontos
-                );
-
-        String valor =
-                linha.substring(
-                        doisPontos + 1
-                );
-
-        if (
-                cabecalho
-                        .toUpperCase(Locale.ROOT)
-                        .contains(
-                                "QUOTED-PRINTABLE"
-                        )
-        ) {
-
-            try {
-
-                byte[] bytes =
-                        decodeQuotedPrintable(
-                                valor
-                        );
-
-                Charset charset =
-                        StandardCharsets.UTF_8;
-
-                Matcher m =
-                        Pattern
-                                .compile(
-                                        "CHARSET=([^;:]+)",
-                                        Pattern.CASE_INSENSITIVE
-                                )
-                                .matcher(
-                                        cabecalho
-                                );
-
-                if (m.find()) {
-
-                    try {
-
-                        charset =
-                                Charset.forName(
-                                        m.group(1)
-                                );
-
-                    } catch (Exception ignored) {
-                    }
-                }
-
-                valor =
-                        new String(
-                                bytes,
-                                charset
-                        );
-
-            } catch (Exception ignored) {
-            }
-        }
-
-        return valor
-                .replace("\\n", " ")
-                .replace("\\N", " ")
-                .replace("\\,", ",")
-                .replace("\\;", ";")
-                .replace("\\\\", "\\")
-                .trim();
-    }
+            cb.setTextSize(18);
 
 
-    private byte[] decodeQuotedPrintable(
-            String texto
-    ) {
+            cb.setChecked(
+                    true
+            );
 
-        ByteArrayOutputStream saida =
-                new ByteArrayOutputStream();
 
-        for (
-                int i = 0;
-                i < texto.length();
-                i++
-        ) {
+            cb.setOnCheckedChangeListener(
+                    (buttonView, isChecked) ->
+                            atualizarSelecionados()
+            );
 
-            char c = texto.charAt(i);
 
-            if (
-                    c == '='
-                    && i + 2 < texto.length()
-            ) {
+            contato.checkBox =
+                    cb;
 
-                String hex =
-                        texto.substring(
-                                i + 1,
-                                i + 3
-                        );
 
-                try {
-
-                    saida.write(
-                            Integer.parseInt(
-                                    hex,
-                                    16
-                            )
-                    );
-
-                    i += 2;
-
-                    continue;
-
-                } catch (Exception ignored) {
-                }
-            }
-
-            byte[] bytes =
-                    String.valueOf(c)
-                            .getBytes(
-                                    StandardCharsets.UTF_8
-                            );
-
-            saida.write(
-                    bytes,
-                    0,
-                    bytes.length
+            areaContatos.addView(
+                    cb
             );
         }
 
-        return saida.toByteArray();
+
+        statusContatos.setText(
+                "CONTATOS KOINONIA ENCONTRADOS: "
+                        + contatos.size()
+        );
+
+
+        atualizarSelecionados();
+
+
+        botaoIniciar.setEnabled(
+                !contatos.isEmpty()
+                        && !versiculos.isEmpty()
+        );
+
+
+        botaoRepetir.setEnabled(
+                existeUltimaDistribuicao()
+        );
     }
 
 
-    // ========================================================
-    // TELEFONE
-    // ========================================================
-
-    private String normalizarNumero(
-            String numero
+    private boolean ehContatoKoinonia(
+            String nome
     ) {
 
-        if (numero == null) {
-            return null;
-        }
+        String n =
+                nome.trim()
+                        .toLowerCase(
+                                Locale.ROOT
+                        );
 
-        numero =
-                numero.replaceAll(
-                        "\\D",
-                        ""
-                );
 
-        if (numero.isEmpty()) {
-            return null;
-        }
-
-        if (
-                numero.startsWith("00")
-        ) {
-
-            numero =
-                    numero.substring(2);
-        }
-
-        if (
-                numero.length() == 10
-                || numero.length() == 11
-        ) {
-
-            numero =
-                    "55" + numero;
-        }
-
-        if (
-                numero.length() < 10
-        ) {
-
-            return null;
-        }
-
-        return numero;
+        return n.equals("koinonia")
+                || n.endsWith(" koinonia")
+                || n.equals("quaerinonia")
+                || n.endsWith(" quaerinonia");
     }
 
-
-    // ========================================================
-    // PRIMEIRO NOME
-    // ========================================================
 
     private String limparPrimeiroNome(
             String nomeCompleto
@@ -807,16 +871,19 @@ public class MainActivity extends Activity {
 
         String nome =
                 nomeCompleto.replaceFirst(
-                        "(?i)\\s+Koinonia\\s*$",
+                        "(?i)\\s+(Koinonia|Quaerinonia)\\s*$",
                         ""
                 ).trim();
+
 
         if (nome.isEmpty()) {
             return "";
         }
 
+
         String primeiro =
                 nome.split("\\s+")[0];
+
 
         primeiro =
                 primeiro.replaceFirst(
@@ -824,86 +891,787 @@ public class MainActivity extends Activity {
                         ""
                 );
 
+
         primeiro =
                 primeiro.replaceFirst(
                         "[^\\p{L}\\p{N}]+$",
                         ""
                 );
 
+
         if (primeiro.isEmpty()) {
             return "";
         }
 
-        return primeiro.substring(
-                0,
-                1
-        ).toUpperCase()
+
+        return primeiro.substring(0, 1)
+                .toUpperCase(
+                        Locale.getDefault()
+                )
                 + primeiro.substring(1);
     }
 
 
-    // ========================================================
-    // MOSTRAR CONTATOS
-    // ========================================================
+    private String normalizarNumero(
+            String numero
+    ) {
 
-    private void mostrarResultado() {
+        numero =
+                numero.replaceAll(
+                        "\\D",
+                        ""
+                );
+
+
+        if (numero.isEmpty()) {
+            return null;
+        }
+
+
+        if (
+                numero.startsWith("00")
+        ) {
+            numero =
+                    numero.substring(2);
+        }
+
+
+        if (
+                numero.length() == 10
+                || numero.length() == 11
+        ) {
+            numero =
+                    "55" + numero;
+        }
+
+
+        if (
+                numero.length() < 10
+        ) {
+            return null;
+        }
+
+
+        return numero;
+    }
+
+    private void selecionarTodos(
+            boolean selecionar
+    ) {
+
+        for (Contato contato : contatos) {
+
+            if (contato.checkBox != null) {
+
+                contato.checkBox.setChecked(
+                        selecionar
+                );
+            }
+        }
+
+
+        atualizarSelecionados();
+    }
+
+
+    private ArrayList<Contato>
+    contatosSelecionados() {
+
+        ArrayList<Contato> resultado =
+                new ArrayList<>();
+
+
+        for (Contato contato : contatos) {
+
+            if (
+                    contato.checkBox != null
+                    && contato.checkBox.isChecked()
+            ) {
+
+                resultado.add(
+                        contato
+                );
+            }
+        }
+
+
+        return resultado;
+    }
+
+
+    private void atualizarSelecionados() {
 
         int quantidade =
-                contatosKoinonia.size();
+                contatosSelecionados()
+                        .size();
 
-        status.setText(
-                "\nCONTATOS KOINONIA ENCONTRADOS: "
+
+        statusSelecionados.setText(
+                "\nSelecionados: "
                         + quantidade
+                        + " de "
+                        + contatos.size()
+                        + "\n"
+        );
+    }
+
+
+    private void prepararNovaRodada() {
+
+        ArrayList<Contato> selecionados =
+                contatosSelecionados();
+
+
+        if (selecionados.isEmpty()) {
+
+            Toast.makeText(
+                    this,
+                    "Selecione pelo menos uma pessoa.",
+                    Toast.LENGTH_LONG
+            ).show();
+
+            return;
+        }
+
+
+        int numeroSalmo =
+                spinnerSalmo
+                        .getSelectedItemPosition()
+                        + 1;
+
+
+        ArrayList<Versiculo> capitulo =
+                versiculosDoSalmo(
+                        numeroSalmo
+                );
+
+
+        if (capitulo.isEmpty()) {
+
+            Toast.makeText(
+                    this,
+                    "Não foram encontrados versículos nesse Salmo.",
+                    Toast.LENGTH_LONG
+            ).show();
+
+            return;
+        }
+
+
+        Collections.shuffle(
+                capitulo
         );
 
-        StringBuilder lista =
-                new StringBuilder();
+
+        LinkedHashMap<String, Versiculo>
+                distribuicao =
+                new LinkedHashMap<>();
+
 
         for (
                 int i = 0;
-                i < contatosKoinonia.size();
+                i < selecionados.size();
                 i++
         ) {
 
             Contato contato =
-                    contatosKoinonia.get(i);
+                    selecionados.get(i);
 
-            lista.append(
-                    i + 1
+
+            Versiculo versiculo =
+                    capitulo.get(
+                            i % capitulo.size()
+                    );
+
+
+            distribuicao.put(
+                    contato.numero,
+                    versiculo
+            );
+        }
+
+
+        salvarUltimaDistribuicao(
+                distribuicao
+        );
+
+
+        mostrarConfirmacao(
+                selecionados,
+                distribuicao,
+                false
+        );
+    }
+
+
+    private void prepararRepeticao() {
+
+        ArrayList<Contato> selecionados =
+                contatosSelecionados();
+
+
+        if (selecionados.isEmpty()) {
+
+            Toast.makeText(
+                    this,
+                    "Selecione quem ficou sem envio.",
+                    Toast.LENGTH_LONG
+            ).show();
+
+            return;
+        }
+
+
+        Map<String, Versiculo> anterior =
+                carregarUltimaDistribuicao();
+
+
+        LinkedHashMap<String, Versiculo> repetir =
+                new LinkedHashMap<>();
+
+
+        ArrayList<Contato> validos =
+                new ArrayList<>();
+
+
+        for (Contato contato : selecionados) {
+
+            Versiculo v =
+                    anterior.get(
+                            contato.numero
+                    );
+
+
+            if (v != null) {
+
+                repetir.put(
+                        contato.numero,
+                        v
+                );
+
+
+                validos.add(
+                        contato
+                );
+            }
+        }
+
+
+        if (validos.isEmpty()) {
+
+            Toast.makeText(
+                    this,
+                    "Nenhum dos selecionados pertence à última rodada.",
+                    Toast.LENGTH_LONG
+            ).show();
+
+            return;
+        }
+
+
+        mostrarConfirmacao(
+                validos,
+                repetir,
+                true
+        );
+    }
+
+
+    private void mostrarConfirmacao(
+            ArrayList<Contato> selecionados,
+            Map<String, Versiculo> distribuicao,
+            boolean repeticao
+    ) {
+
+        StringBuilder texto =
+                new StringBuilder();
+
+
+        if (repeticao) {
+
+            texto.append(
+                    "REPETIR COM OS MESMOS VERSÍCULOS\n\n"
             );
 
-            lista.append(
-                    " - "
-            );
+        } else {
 
-            lista.append(
+            texto.append(
+                    "DISTRIBUIÇÃO\n\n"
+            );
+        }
+
+
+        for (Contato contato : selecionados) {
+
+            Versiculo v =
+                    distribuicao.get(
+                            contato.numero
+                    );
+
+
+            if (v == null) {
+                continue;
+            }
+
+
+            texto.append(
                     contato.nome
             );
 
-            lista.append(
+            texto.append(
+                    " → Salmo "
+            );
+
+            texto.append(
+                    v.salmo
+            );
+
+            texto.append(
+                    ":"
+            );
+
+            texto.append(
+                    v.versiculo
+            );
+
+            texto.append(
                     "\n"
             );
         }
 
-        listaContatos.setText(
-                lista.toString()
+
+        texto.append(
+                "\nIntervalo: 5 segundos."
         );
 
-        botaoSalmo.setEnabled(
-                quantidade > 0
+
+        texto.append(
+                "\n\nO aplicativo abre cada conversa "
+                        + "e você toca no botão ENVIAR."
         );
 
-        botaoIniciar.setEnabled(false);
 
-        if (quantidade > 0) {
+        new AlertDialog.Builder(this)
+
+                .setTitle(
+                        repeticao
+                                ? "Repetir mensagens"
+                                : "Confirmar mensagens"
+                )
+
+                .setMessage(
+                        texto.toString()
+                )
+
+                .setPositiveButton(
+                        "INICIAR",
+                        (dialog, which) ->
+                                prepararFila(
+                                        selecionados,
+                                        distribuicao
+                                )
+                )
+
+                .setNegativeButton(
+                        "CANCELAR",
+                        null
+                )
+
+                .show();
+    }
+
+    private void prepararFila(
+            ArrayList<Contato> selecionados,
+            Map<String, Versiculo> distribuicao
+    ) {
+
+        pendenteNomes =
+                new ArrayList<>();
+
+        pendenteNumeros =
+                new ArrayList<>();
+
+        pendenteSalmos =
+                new ArrayList<>();
+
+        pendenteVersiculos =
+                new ArrayList<>();
+
+        pendenteTextos =
+                new ArrayList<>();
+
+
+        for (Contato contato : selecionados) {
+
+            Versiculo v =
+                    distribuicao.get(
+                            contato.numero
+                    );
+
+
+            if (v == null) {
+                continue;
+            }
+
+
+            pendenteNomes.add(
+                    contato.nome
+            );
+
+
+            pendenteNumeros.add(
+                    contato.numero
+            );
+
+
+            pendenteSalmos.add(
+                    v.salmo
+            );
+
+
+            pendenteVersiculos.add(
+                    v.versiculo
+            );
+
+
+            pendenteTextos.add(
+                    v.texto
+            );
+        }
+
+
+        if (pendenteNomes.isEmpty()) {
+            return;
+        }
+
+
+        if (
+                Build.VERSION.SDK_INT >= 23
+                && !Settings.canDrawOverlays(
+                this
+        )
+        ) {
+
+            aguardandoOverlay = true;
+
+
+            new AlertDialog.Builder(this)
+
+                    .setTitle(
+                            "Permissão necessária"
+                    )
+
+                    .setMessage(
+                            "Para abrir automaticamente "
+                                    + "a próxima conversa a cada "
+                                    + "5 segundos, permita "
+                                    + "\"Exibir sobre outros apps\" "
+                                    + "para Koinonia Salmos.\n\n"
+                                    + "Essa configuração é feita "
+                                    + "somente uma vez."
+                    )
+
+                    .setPositiveButton(
+                            "ABRIR CONFIGURAÇÃO",
+                            (dialog, which) -> {
+
+                                Intent intent =
+                                        new Intent(
+                                                Settings
+                                                        .ACTION_MANAGE_OVERLAY_PERMISSION,
+
+                                                Uri.parse(
+                                                        "package:"
+                                                                + getPackageName()
+                                                )
+                                        );
+
+
+                                startActivity(
+                                        intent
+                                );
+                            }
+                    )
+
+                    .setNegativeButton(
+                            "CANCELAR",
+                            (dialog, which) ->
+                                    aguardandoOverlay =
+                                            false
+                    )
+
+                    .show();
+
+
+            return;
+        }
+
+
+        iniciarServico();
+    }
+
+
+    @Override
+    protected void onResume() {
+
+        super.onResume();
+
+
+        if (
+                aguardandoOverlay
+                && Build.VERSION.SDK_INT >= 23
+                && Settings.canDrawOverlays(
+                this
+        )
+        ) {
+
+            aguardandoOverlay =
+                    false;
+
+
+            iniciarServico();
+        }
+    }
+
+
+    private void iniciarServico() {
+
+        if (
+                pendenteNomes == null
+                || pendenteNomes.isEmpty()
+        ) {
+            return;
+        }
+
+
+        Intent intent =
+                new Intent(
+                        this,
+                        MessageService.class
+                );
+
+
+        intent.putStringArrayListExtra(
+                "nomes",
+                pendenteNomes
+        );
+
+
+        intent.putStringArrayListExtra(
+                "numeros",
+                pendenteNumeros
+        );
+
+
+        intent.putIntegerArrayListExtra(
+                "salmos",
+                pendenteSalmos
+        );
+
+
+        intent.putIntegerArrayListExtra(
+                "versiculos",
+                pendenteVersiculos
+        );
+
+
+        intent.putStringArrayListExtra(
+                "textos",
+                pendenteTextos
+        );
+
+
+        if (Build.VERSION.SDK_INT >= 26) {
+
+            startForegroundService(
+                    intent
+            );
+
+        } else {
+
+            startService(
+                    intent
+            );
+        }
+
+
+        Toast.makeText(
+                this,
+                "Fila iniciada. Próxima conversa em 5 segundos.",
+                Toast.LENGTH_LONG
+        ).show();
+    }
+
+
+    private void salvarUltimaDistribuicao(
+            Map<String, Versiculo> mapa
+    ) {
+
+        try {
+
+            JSONObject raiz =
+                    new JSONObject();
+
+
+            for (
+                    Map.Entry<String, Versiculo> item :
+                    mapa.entrySet()
+            ) {
+
+                Versiculo v =
+                        item.getValue();
+
+
+                JSONObject obj =
+                        new JSONObject();
+
+
+                obj.put(
+                        "salmo",
+                        v.salmo
+                );
+
+
+                obj.put(
+                        "versiculo",
+                        v.versiculo
+                );
+
+
+                obj.put(
+                        "texto",
+                        v.texto
+                );
+
+
+                raiz.put(
+                        item.getKey(),
+                        obj
+                );
+            }
+
+
+            getSharedPreferences(
+                    PREFS,
+                    MODE_PRIVATE
+            )
+                    .edit()
+
+                    .putString(
+                            ULTIMA_DISTRIBUICAO,
+                            raiz.toString()
+                    )
+
+                    .apply();
+
+
+            botaoRepetir.setEnabled(
+                    true
+            );
+
+        } catch (Exception e) {
 
             Toast.makeText(
                     this,
-                    quantidade
-                            + " contatos Koinonia encontrados.",
-                    Toast.LENGTH_LONG
+                    "Não foi possível guardar a distribuição.",
+                    Toast.LENGTH_SHORT
             ).show();
         }
+    }
+
+
+    private Map<String, Versiculo>
+    carregarUltimaDistribuicao() {
+
+        LinkedHashMap<String, Versiculo> resultado =
+                new LinkedHashMap<>();
+
+
+        String salvo =
+                getSharedPreferences(
+                        PREFS,
+                        MODE_PRIVATE
+                )
+                        .getString(
+                                ULTIMA_DISTRIBUICAO,
+                                null
+                        );
+
+
+        if (salvo == null) {
+            return resultado;
+        }
+
+
+        try {
+
+            JSONObject raiz =
+                    new JSONObject(
+                            salvo
+                    );
+
+
+            JSONArray nomes =
+                    raiz.names();
+
+
+            if (nomes == null) {
+                return resultado;
+            }
+
+
+            for (
+                    int i = 0;
+                    i < nomes.length();
+                    i++
+            ) {
+
+                String numero =
+                        nomes.getString(i);
+
+
+                JSONObject obj =
+                        raiz.getJSONObject(
+                                numero
+                        );
+
+
+                resultado.put(
+                        numero,
+
+                        new Versiculo(
+                                obj.getInt(
+                                        "salmo"
+                                ),
+
+                                obj.getInt(
+                                        "versiculo"
+                                ),
+
+                                obj.getString(
+                                        "texto"
+                                )
+                        )
+                );
+            }
+
+        } catch (Exception ignored) {
+        }
+
+
+        return resultado;
+    }
+
+
+    private boolean existeUltimaDistribuicao() {
+
+        return getSharedPreferences(
+                PREFS,
+                MODE_PRIVATE
+        )
+                .contains(
+                        ULTIMA_DISTRIBUICAO
+                );
     }
 
 
@@ -913,6 +1681,7 @@ public class MainActivity extends Activity {
                 getResources()
                         .getDisplayMetrics()
                         .density;
+
 
         return (int) (
                 valor * densidade
